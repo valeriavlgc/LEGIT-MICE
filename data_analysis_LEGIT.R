@@ -8,14 +8,26 @@ library(writexl)
 #         IMPUTATED         # 
 # ------------------------- #
 
-run_analysis_imputed <- function(gene, e, out, dt_imp, i, analysis_type) {
+run_analysis_imputed <- function(gene, e, out, dt_imp, i, analysis_type, multilevel_id = NULL, verbose = TRUE) {
+
+  fits <- vector("list", nimp)
+  fit_df_list <- vector("list", nimp)
+  crossover_int <- ""
+  crossover_int2 <- ""
+  tie <- logical()
   
-  config <- get_analysis_config(analysis_type, out)    
+  config <- get_analysis_config(analysis_type, out, multilevel_id)
   params <- list(genes = gene, env = e)
   
   # Write name of the interaction
-  name_combination <- paste(gene, e, out, sep = "_")
+  #name_combination <- paste(gene, e, out, sep = "_")
   
+  name_combination <- paste(
+    paste(gene, collapse = "_"),
+    paste(e, collapse = "_"),
+    out, sep = "_"
+  )
+
   tryCatch({
     for (j in 1: nimp) { 
       data_complete <- complete(dt_imp, action = j)
@@ -41,13 +53,16 @@ run_analysis_imputed <- function(gene, e, out, dt_imp, i, analysis_type) {
         term = rownames(fixed_effects),  
         estimate = fixed_effects[, "Estimate"],
         std.error = fixed_effects[, "Std. Error"], 
-        residual.df = rep(NA, nrow(fixed_effects)))
+        residual.df = rep(NA, nrow(fixed_effects)),
+        row.names = NULL
+    )
       
       fit_df_list[[x]] <- fit_df_imputed
     }
     
     w <- do.call(rbind, fit_df_list)
-    
+    rownames(w) <- NULL
+
     # Now use the pool.table() function to pool the results
     pooled_fits <- pool.table(
       w, 
@@ -55,11 +70,12 @@ run_analysis_imputed <- function(gene, e, out, dt_imp, i, analysis_type) {
       conf.int = TRUE,  # Include confidence intervals
       conf.level = 0.95,  # 95% confidence level
       exponentiate = FALSE,  # Don't exponentiate unless it's logistic regression
-      dfcom = 634,  # Use a large sample (infinite degrees of freedom)
+      #dfcom = nrow(data_complete) - 6,  
+      dfcom = nrow(data_complete) - length(coef(fits[[1]]$fit_main)),
       rule = "rubin1987"  # Default rule for pooling
     )
-    
-    # Calculate Chi-squared statistics and p-values for pooled fixed effects
+
+        # Calculate Chi-squared statistics and p-values for pooled fixed effects
     anova_results <- pooled_fits %>%
       dplyr::mutate(
         chisq = (estimate / std.error)^2,  # Chi-squared statistic
@@ -70,15 +86,15 @@ run_analysis_imputed <- function(gene, e, out, dt_imp, i, analysis_type) {
     rownames(anova_results) <- anova_results[[1]]
     
     
-    if (!dir.exists("plots")) {
-      dir.create("plots")
+    if (verbose) {
+      if (!dir.exists("plots")) dir.create("plots")
+      # Plot uses the first imputation as representative
+      png(paste0("plots/", i, "_", name_combination, ".png"), width = 800, height = 600)
+      fit <- fits[[1]]
+      plot(fit, ylab = fit$fit_genes$formula, xlab = fit$fit_env$formula, cex.leg = 1.2)
+      dev.off()
+      cat("Plot saved as", name_combination)
     }
-    # Check to improve the plot, this one is for the first imputation
-    png(paste0("plots/", i, "_", name_combination, ".png"), width = 800, height = 600)
-    fit <- fits[[1]]
-    plot <- plot(fit, ylab = fit$fit_genes$formula , xlab = fit$fit_env$formula, cex.leg=1.2)
-    dev.off()
-    cat("Plot saved as", name_combination)
     
     
     GxE_test_AIC_results <- lapply(1:dt_imp$m, function(k) {
@@ -187,6 +203,7 @@ run_analysis_imputed <- function(gene, e, out, dt_imp, i, analysis_type) {
       P_value_C1 = anova_results["C1", "p.value"],
       P_value_C2 = anova_results["C2", "p.value"],
       F_ratio = anova_results["G:E", "chisq"],
+      GxE_estimate = anova_results["G:E", "estimate"],  
       Type_of_interaction = mod1,
       AIC = sorted_aic[1],
       crossover_int = crossover_int,
@@ -208,41 +225,45 @@ run_analysis_imputed <- function(gene, e, out, dt_imp, i, analysis_type) {
   
 }
 
-run_analysis <- function(gene, e, out, data, i, analysis_type) {
-  
-  config <- get_analysis_config(analysis_type, out)    
+run_analysis <- function(gene, e, out, data, i, analysis_type, multilevel_id = NULL, verbose = TRUE) {
+
+  config <- get_analysis_config(analysis_type, out, multilevel_id)
   params <- list(genes = gene, env = e)
 
   genes <- data[, params$genes, drop = FALSE]
   env <- data[, params$env, drop = FALSE] 
   
   # Write name of the interaction
-  name_combination <- paste(gene, e, out, sep = "_")
+  #name_combination <- paste(gene, e, out, sep = "_")
+  
+  name_combination <- paste(
+    paste(gene, collapse = "_"),
+    paste(e, collapse = "_"),
+    out, sep = "_"
+  )
 
   # GxE model
   fit = LEGIT(data, genes, env, formula = config$formula_dynamic, 
               lme4 = config$use_lme4, rescale = config$use_lme4)
   
-  if (!dir.exists("plots")) {
-    dir.create("plots")
+  if (verbose) {
+    if (!dir.exists("plots")) dir.create("plots")
+    png(paste0("plots/", i, "_", name_combination, ".png"), width = 800, height = 600)
+    plot(fit, cex.leg = 1.2)
+    dev.off()
+    cat("Plot saved as", name_combination)
   }
-  
-  png(paste0("plots/", i, "_", name_combination, ".png"), width = 800, height = 600)
-  plot = plot(fit, cex.leg=1.2)
-  dev.off()
-  cat("Plot saved as", name_combination)
   
   if(analysis_type == ANALYSIS_TYPE$UNILEVEL) {
     fit_sum <- summary(fit)
     coefficients <- fit_sum$fit_main$coefficients
-    fit_glm <- glm(formula = fit$fit_main$formula, family = fit$fit_main$family,
-                   data = fit$fit_main$data)
-    anova_result <- anova(fit_glm, test = "F")
+    # Use Wald t² (partial F) for F_ratio — consistent with the imputed path
+    # which also uses (estimate/std.error)^2. The previous anova(fit_glm, test="F")
+    # used sequential (Type I) SS which inflates F relative to the partial test.
     pval_col <- "Pr(>|t|)"
-    fval_col <- "F"
+    fval_col <- "t value"  # we square this below
   } else if (analysis_type == ANALYSIS_TYPE$MULTILEVEL) {
     coefficients <- car::Anova(fit$fit_main)
-    anova_result <- car::Anova(fit$fit_main)
     pval_col <- "Pr(>Chisq)"
     fval_col <- "Chisq"
   }
@@ -279,7 +300,11 @@ run_analysis <- function(gene, e, out, data, i, analysis_type) {
     P_value_G = coefficients["G", pval_col],
     P_value_C1 = coefficients["C1", pval_col],
     P_value_C2 = coefficients["C2", pval_col],
-    F_ratio = anova_result["G:E", fval_col],
+    F_ratio = if (analysis_type == ANALYSIS_TYPE$UNILEVEL)
+                coefficients["G:E", fval_col]^2   # t² = Wald partial F
+              else
+                coefficients["G:E", fval_col],     # chi-squared for multilevel
+    GxE_estimate = fit_sum$fit_main$coefficients["G:E", "Estimate"],
     Type_of_interaction = mod1,
     AIC = as.numeric(GxE_test_AIC$results[1]),
     crossover_int = GxE_test_AIC$results[1, 3],
@@ -290,49 +315,76 @@ run_analysis <- function(gene, e, out, data, i, analysis_type) {
   ))
 }
 
-run_analysis_LEGIT <- function(genes_values, env_values, out_values, dt, i, analysis_type, imputated) {
+run_analysis_LEGIT <- function(genes_values, env_values, out_values, dt,
+                               analysis_type, imputated, multilevel_id = NULL,
+                               save_results = TRUE, verbose = TRUE) {
   
   # if(analysis_type == ANALYSIS_TYPE$MULTILEVEL && dt) change ID twin thing???
+  i <- 0
+  results_list <- list()
   
   cat("Running", 
       if (imputated) "IMPUTED" else "STANDARD", 
       if (analysis_type == ANALYSIS_TYPE$MULTILEVEL) "MULTILEVEL" else "UNILEVEL", 
       "LEGIT analysis...\n")  
-
+  
+  
     if(imputated){
-    for (gene in genes_values) {
-      for (e in env_values) {
-        for (out in out_values) {
-          i <- i + 1
-          result <- run_analysis_imputated(gene, e, out, dt, i, analysis_type)
-          results_list[[i]] <- result
-        }
+      for (out in out_values) {
+        i <- i + 1
+        result <- run_analysis_imputed(genes_values, env_values, out, dt, i, analysis_type, multilevel_id, verbose = verbose)
+        results_list[[i]] <- result
       }
-    }
-     res <- "/results_MI_"
+      res <- "/results_MI_"
     } else {
-      for (gene in genes_values) {
-        for (e in env_values) {
-          for (out in out_values) {
-            i <- i + 1
-            result <- run_analysis(gene, e, out, dt, i, analysis_type)
-            results_list[[i]] <- result
-          }
-        }
+      for (out in out_values) {
+        i <- i + 1
+        result <- run_analysis(genes_values, env_values, out, dt, i, analysis_type, multilevel_id, verbose = verbose)
+        results_list[[i]] <- result
       }
       res <- "/results_"
     }
+
+# TO PASS 1 GENE AT A TIME
+  
+    # if(imputated){
+    #   for (gene in genes_values) {
+    #     for (e in env_values) {
+    #       for (out in out_values) {
+    #         i <- i + 1
+    #         result <- run_analysis_imputed(gene, e, out, dt, i, analysis_type, multilevel_id, verbose = verbose)
+    #         results_list[[i]] <- result
+    #       }
+    #     }
+    #   }
+    #    res <- "/results_MI_"
+    # } else {
+    #   for (gene in genes_values) {
+    #     for (e in env_values) {
+    #       for (out in out_values) {
+    #         i <- i + 1
+    #         result <- run_analysis(gene, e, out, dt, i, analysis_type, multilevel_id, verbose = verbose)
+    #         results_list[[i]] <- result
+    #       }
+    #     }
+    #   }
+    #   res <- "/results_"
+    # }
       
     # Convert to data.frame
     results <- do.call(rbind, lapply(results_list, as.data.frame))
-    if (!dir.exists("results")) dir.create("results")
-    write_xlsx(results, paste0("results", res , analysis_type, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".xlsx"))
     
-    cat("\nFinished", 
-        if (imputated) "IMPUTED" else "STANDARD", 
-        if (analysis_type == ANALYSIS_TYPE$MULTILEVEL) "MULTILEVEL" else "UNILEVEL", 
-        "LEGIT analysis. Results saved in /results\n")
+    if (save_results) {
+      if (!dir.exists("results")) dir.create("results")
+        write_xlsx(results, paste0("results", res , analysis_type, "_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".xlsx"))
+        cat("\nFinished", 
+            if (imputated) "IMPUTED" else "STANDARD", 
+            if (analysis_type == ANALYSIS_TYPE$MULTILEVEL) "MULTILEVEL" else "UNILEVEL", 
+            "LEGIT analysis. Results saved in /results\n")
+        
+        print(results)  
+    }
     
-    print(results)  
+    return(results)
 }
 

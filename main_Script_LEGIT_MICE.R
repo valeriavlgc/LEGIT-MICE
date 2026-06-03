@@ -1,4 +1,3 @@
-# Solve the package problem
 library(foreign)
 
 source("config.R")
@@ -7,43 +6,72 @@ source("data_simulation.R")
 source("data_imputation.R")
 source("data_analysis_LEGIT.R")
 
-## add seed to config ?
-# see in which other source files I would need to upload rest of R scripts?
-# probaar todo, multilevel y unilevel f ratio both for imputated? is neg env working?
+# -----------------------------------------------------------------------------
+# Step 1: Simulate data
+#
+# simulate_data() returns a data.frame with:
+#   - G1, G2            : genetic indicators (LEGIT estimates their weights)
+#   - E1, E2            : environmental indicators (E2 is adverse, see neg_env)
+#   - C1, C2            : model covariates included in the LEGIT formula
+#   - Y1, Y2            : outcomes
+#   - Aux1, Aux2, Aux3, Aux4 : auxiliary variables — used in MICE only,
+#                         never entered into LEGIT. Always fully observed.
+# -----------------------------------------------------------------------------
+dt <- simulate_data(n = 1000, seed = 123)
 
-dt <- simulate_data(n=1000, seed=123)
-dt_miss <- missings_data(dt = dt, percentage=0.15, seed=123)
-dt_imp <- imputate_data(dt= dt_miss, seed=123)
+# -----------------------------------------------------------------------------
+# Step 2: Introduce MCAR missingness and impute
+#
+# missings_data_MCAR() applies 15% Missing Completely At Random missingness
+# to the analysis variables only (G, E, C, Y). Auxiliary variables remain
+# fully observed — their completeness is what makes them useful for MICE.
+#
+# imputate_data() runs MICE using all available variables as predictors,
+# including Y predicting G/E and the auxiliary variables predicting everything.
+# -----------------------------------------------------------------------------
+dt_miss <- missings_data_MCAR(dt, percentage = 0.15, seed = 123)
+dt_imp  <- imputate_data(dt_miss, seed = 123)
 
+# -----------------------------------------------------------------------------
+# Step 3: Define analysis variables
+# -----------------------------------------------------------------------------
+genes_values  <- c("G1", "G2")
+env_values    <- c("E1", "E2")
+out_values    <- c("Y1", "Y2")
+neg_env       <- c("E2")      # E2 was simulated with reversed sign
+multilevel_id <- "idtw"       # grouping variable — used only for MULTILEVEL
 
-# genes_values <- c("G1")
-# env_values <- c("E1", "E2")
-# neg_env <- c("E1")
-# out_values <- c("Y1", "Y2")
-
-genes_values <- c("G1")
-env_values <- c("E2")
-out_values <- c("Y2")
-neg_env <- c("")
-
-
-#add amount of data missingnes to fomrula missing.
-
-
-
-#check_vars(colnames(complete(dt_imp, 1)), c(genes_values, env_values, out_values, neg_env))
-           
 analysis_type <- ANALYSIS_TYPE$UNILEVEL
 
-# Original db
-run_analysis_LEGIT(genes_values, env_values, out_values, dt, i, analysis_type, imputated = FALSE)
-# Db with MCAR data 
-run_analysis_LEGIT(genes_values, env_values, out_values, dt_miss, i, analysis_type, imputated = FALSE)
-# imputated data
-run_analysis_LEGIT(genes_values, env_values, out_values, dt_imp, i, analysis_type, imputated = TRUE)
+# -----------------------------------------------------------------------------
+# Step 4: Run the three-way comparison
+#
+#   1. Complete data   — true GxE signal, upper benchmark
+#   2. MCAR + listwise — signal degradation under missingness (no imputation)
+#   3. MCAR + MICE     — signal recovery after imputation
+#
+# Expected pattern: F_complete > F_listwise, F_imputed > F_listwise
+# -----------------------------------------------------------------------------
 
-# To run on real data
-#run_analysis_LEGIT(genes_values, env_values, out_values, read.spss(DATA_PATH, to.data.frame=TRUE), i, analysis_type, imputated = FALSE)
+# 1. Complete data — no missingness
+cat("\n===== COMPLETE DATA =====\n")
+run_analysis_LEGIT(genes_values, env_values, out_values, dt,
+                   analysis_type, imputated = FALSE, multilevel_id = multilevel_id)
+
+# 2. MCAR data — listwise deletion (no imputation)
+cat("\n===== MCAR — LISTWISE DELETION =====\n")
+run_analysis_LEGIT(genes_values, env_values, out_values, dt_miss,
+                   analysis_type, imputated = FALSE, multilevel_id = multilevel_id)
+
+# 3. MCAR data — MICE imputed (5 imputations, pooled with Rubin's rules)
+cat("\n===== MCAR — MICE IMPUTED =====\n")
+run_analysis_LEGIT(genes_values, env_values, out_values, dt_imp,
+                   analysis_type, imputated = TRUE, multilevel_id = multilevel_id)
+
+# To run on real data (uncomment and set DATA_PATH in config.R):
+# run_analysis_LEGIT(genes_values, env_values, out_values,
+#                    read.spss(DATA_PATH, to.data.frame = TRUE),
+#                    i, analysis_type, imputated = FALSE, multilevel_id = multilevel_id)
 
 
 

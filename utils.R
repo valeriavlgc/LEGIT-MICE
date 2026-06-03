@@ -6,6 +6,7 @@ append_na_results <- function() {
     P_value_C1 = "",
     P_value_C2 = "",
     F_ratio = "",
+    GxE_estimate = "", 
     Type_of_interaction = "",
     AIC = "",
     crossover_int = "",
@@ -18,6 +19,8 @@ append_na_results <- function() {
 
 # # Split and extract values from crossover for DS models
 calculate_crossover <- function(crossover) {
+  min_values <- matrix(NA, nrow = 2, ncol = nimp) 
+  max_values <- matrix(NA, nrow = 2, ncol = nimp)  
   for (row in 1:2) {
     for (col in 1:nimp) {
       crossover_value <- as.character(crossover[row, col])
@@ -45,31 +48,42 @@ calculate_crossover <- function(crossover) {
 
 
 # Revert model diathesis/vantage when environment is negative
+# revert_model <- function(mod, e) {
+#   if(e %in% neg_env & mod %in% rev_models) {
+#     
+#     if(mod == "diathesis_stress_WEAK") 
+#       mod_revert <- "vantage_sensitivity_WEAK"
+#     if(mod == "diathesis_stress_STRONG")
+#       mod_revert <- "vantage_sensitivity_STRONG"
+#     if(mod == "vantage_sensitivity_WEAK")
+#       mod_revert <- "diathesis_stress_WEAK"
+#     if(mod == "vantage_sensitivity_STRONG")
+#       mod_revert <- "diathesis_stress_STRONG"
+#     
+#     return(mod_revert)
+#     
+#   } else {
+#     return(mod)
+#   }
+# }
+
 revert_model <- function(mod, e) {
-  if(e %in% neg_env & mod %in% rev_models) {
-    
-    if(mod == "diathesis_stress_WEAK") 
-      mod_revert <- "vantage_sensitivity_WEAK"
-    if(mod == "diathesis_stress_STRONG")
-      mod_revert <- "vantage_sensitivity_STRONG"
-    if(mod == "vantage_sensitivity_WEAK")
-      mod_revert <- "diathesis_stress_WEAK"
-    if(mod == "vantage_sensitivity_STRONG")
-      mod_revert <- "diathesis_stress_STRONG"
-    
-    return(mod_revert)
-    
-  } else {
-    return(mod)
+  if (any(e %in% neg_env) & mod %in% rev_models) {
+    if (mod == "diathesis_stress_WEAK")      return("vantage_sensitivity_WEAK")
+    if (mod == "diathesis_stress_STRONG")    return("vantage_sensitivity_STRONG")
+    if (mod == "vantage_sensitivity_WEAK")   return("diathesis_stress_WEAK")
+    if (mod == "vantage_sensitivity_STRONG") return("diathesis_stress_STRONG")
   }
+  return(mod)
 }
 
-get_analysis_config <- function(analysis_type, out) {
-  
+get_analysis_config <- function(analysis_type, out, multilevel_id = NULL) {
+
 if (analysis_type == ANALYSIS_TYPE$MULTILEVEL) {
-  # multilevel variable is in config
-  formula_dynamic <- as.formula(paste(out, "~", interaction_term, "+", covariate1, "+", covariate2, "+", idtw))
-  formula_dynamic2 <- as.formula(paste(out, "~", 1, "+", idtw))
+  if (is.null(multilevel_id)) stop("multilevel_id must be provided for MULTILEVEL analysis")
+  random_term <- paste0("(1|", multilevel_id, ")")
+  formula_dynamic <- as.formula(paste(out, "~", interaction_term, "+", covariate1, "+", covariate2, "+", random_term))
+  formula_dynamic2 <- as.formula(paste(out, "~", 1, "+", random_term))
   use_lme4 <- TRUE
   
 } else if (analysis_type == ANALYSIS_TYPE$UNILEVEL) {
