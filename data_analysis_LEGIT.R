@@ -248,10 +248,15 @@ run_analysis <- function(gene, e, out, data, i, analysis_type, multilevel_id = N
   
   if (verbose) {
     if (!dir.exists("plots")) dir.create("plots")
-    png(paste0("plots/", i, "_", name_combination, ".png"), width = 800, height = 600)
-    plot(fit, cex.leg = 1.2)
-    dev.off()
-    cat("Plot saved as", name_combination)
+    tryCatch({
+      png(paste0("plots/", i, "_", name_combination, ".png"), width = 800, height = 600)
+      plot(fit, cex.leg = 1.2)
+      dev.off()
+      cat("Plot saved as", name_combination)
+    }, error = function(e) {
+      dev.off()
+      cat("Plot failed for", name_combination, ":", e$message, "\n")
+    })
   }
   
   if(analysis_type == ANALYSIS_TYPE$UNILEVEL) {

@@ -30,6 +30,8 @@ dt <- simulate_data(n = 1000, seed = 123)
 # including Y predicting G/E and the auxiliary variables predicting everything.
 # -----------------------------------------------------------------------------
 dt_miss <- missings_data_MCAR(dt, percentage = 0.15, seed = 123)
+#dt_miss <- missings_data_MAR(dt, percentage = 0.15, seed = 123)
+ 
 dt_imp  <- imputate_data(dt_miss, seed = 123)
 
 # -----------------------------------------------------------------------------

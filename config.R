@@ -3,7 +3,7 @@ rev_models <- c("diathesis_stress_WEAK", "diathesis_stress_STRONG", "vantage_sen
 interaction_term <- "G*E"
 covariate1 <- "C1"
 covariate2 <- "C2"
-nimp <- 10
+nimp <- 20
 tolerance <- 1
 ANALYSIS_TYPE <- list(
   MULTILEVEL = "multilevel",
